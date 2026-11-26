@@ -6,7 +6,9 @@
 --   2. parses the subject out of the message (epoch, tournament, input, block, hashes);
 --   3. drops a repeat of the same kind and subject within a time window;
 --   4. appends one JSON line per anomaly to a file;
---   5. optionally posts a short text to a webhook, in the background, never waiting for it.
+--   5. optionally posts it to a Discord or Slack webhook, in the background, never waiting for it:
+--      a colored embed per severity; guardian alarms get every field and the full hashes, the others
+--      a compact card.
 --
 -- It never asks anyone to foreclose on crisium alone. An alarm that may lead to foreclosure is marked
 -- "signable": false and lists what a signer still needs (a second verifier's answer, the acceptance
@@ -25,6 +27,7 @@
 --   CRISIUM_ALERTS_PROVIDER         the RPC provider crisium reads, for the alarm
 --   CRISIUM_ALERTS_CURL             curl binary (default "curl")
 --   CRISIUM_ALERTS_RUNBOOK          optional runbook URL for each alarm; "{kind}" is replaced by the kind
+--   CRISIUM_ALERTS_MENTION          optional text posted above guardian alarms, e.g. a Discord role "<@&ID>"
 
 local getenv = os.getenv
 
@@ -40,6 +43,7 @@ local config = {
     provider = getenv("CRISIUM_ALERTS_PROVIDER"),
     curl = getenv("CRISIUM_ALERTS_CURL") or "curl",
     runbook = getenv("CRISIUM_ALERTS_RUNBOOK"),
+    mention = getenv("CRISIUM_ALERTS_MENTION"),
 }
 if config.webhook == "" then
     config.webhook = nil
@@ -266,20 +270,150 @@ local function shell_quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
+-- Webhook presentation. Colors and markers per severity; Discord embeds take the color as an integer.
+local STYLE = {
+    guardian = { color = 0xE24B4A, hex = "#E24B4A", mark = "\u{1F6A8}", label = "Guardian" },
+    operator = { color = 0xF08C2B, hex = "#F08C2B", mark = "\u{1F7E0}", label = "Operator" },
+    warn = { color = 0xF2C94C, hex = "#F2C94C", mark = "\u{26A0}\u{FE0F}", label = "Warning" },
+    self = { color = 0x95A5A6, hex = "#95A5A6", mark = "\u{2139}\u{FE0F}", label = "Sentinel" },
+}
+
+-- What each hash in a message is, in order, for the kinds that carry more than one.
+local HASH_LABELS = {
+    staged_tournament_result_mismatch = { "Staged state", "Staged outputs root", "Local state", "Local outputs root" },
+    conflicting_claim = { "Joined commitment", "Local commitment" },
+    sentry_claim_mismatch = { "Sentry vote", "Local state" },
+    lost_match = { "Local commitment" },
+    transition_verification_mismatch = { "Expected", "Native result" },
+}
+
+local function clip(s, n)
+    s = tostring(s)
+    if #s <= n then
+        return s
+    end
+    return s:sub(1, n - 3) .. "..."
+end
+
+local function short_hash(h)
+    return h:sub(1, 10) .. "\u{2026}" .. h:sub(-6)
+end
+
+local function title_of(alarm, style)
+    local what = alarm.kind:gsub("_", " ")
+    if alarm.subject and alarm.subject.job then
+        what = what .. ": " .. alarm.subject.job
+    end
+    return clip(style.mark .. " " .. style.label .. " \u{00B7} " .. what, 256)
+end
+
+-- The fields of an alarm as {name, value, inline}. full = the guardian layout: every field and full hashes.
+local function fields_of(alarm, full)
+    local s = alarm.subject or {}
+    local out = {}
+    local function add(name, value, inline)
+        if value ~= nil and value ~= "" then
+            out[#out + 1] = { name = name, value = clip(value, 1024), inline = inline }
+        end
+    end
+    if full then
+        add("Severity", alarm.severity, true)
+    end
+    add("Epoch", s.epoch, true)
+    add("Input", s.input, true)
+    add("Output", s.output, true)
+    local block_label = ({ deadline_near = "Window closes", missed_deadline = "Window closed",
+        stalled_action = "Due since" })[alarm.kind] or "Block"
+    add(block_label, s.block and ("block " .. s.block), true)
+    add("Tournament", s.tournament and ("`" .. (full and s.tournament or short_hash(s.tournament)) .. "`"), true)
+    add("Sentry", s.sentry and ("`" .. (full and s.sentry or short_hash(s.sentry)) .. "`"), true)
+    add("Nonce", s.nonce, true)
+    if full then
+        add("Notify", table.concat(alarm.recipients or {}, ", "), true)
+    end
+    local labels = HASH_LABELS[alarm.kind] or {}
+    for i, h in ipairs(s.hashes or {}) do
+        local name = labels[i] or ("Hash " .. i)
+        if full then
+            add(name, "`" .. h .. "`", false)
+        else
+            add(name, "`" .. short_hash(h) .. "`", true)
+        end
+    end
+    add("Next step", alarm.action, false)
+    if full then
+        add("crisium message", "```" .. clip(alarm.message, 1000) .. "```", false)
+    end
+    return out
+end
+
+local function footer_of(alarm)
+    local parts = { alarm.source }
+    if alarm.detector then
+        parts[#parts + 1] = alarm.detector.version
+        parts[#parts + 1] = alarm.detector.provider
+    elseif config.provider then
+        parts[#parts + 1] = config.provider
+    end
+    return clip(table.concat(parts, " \u{00B7} "), 2048)
+end
+
+local function description_of(alarm)
+    local d = alarm.summary or ""
+    if alarm.foreclosure then
+        d = d .. "\n**Not signable alone:** needs a second verifier and the acceptance status."
+    end
+    return clip(d, 4096)
+end
+
+-- The webhook body: a Discord embed, or a Slack attachment with the same fields.
+local function payload(alarm)
+    local style = STYLE[alarm.severity] or STYLE.operator
+    local full = alarm.severity == "guardian"
+    local fields = fields_of(alarm, full)
+    if config.webhook_format == "slack" then
+        local slack_fields = {}
+        for i, f in ipairs(fields) do
+            slack_fields[i] = { title = f.name, value = f.value, short = f.inline }
+        end
+        return encode({
+            text = full and config.mention or nil,
+            attachments = {
+                {
+                    color = style.hex,
+                    title = title_of(alarm, style),
+                    title_link = alarm.runbook,
+                    text = description_of(alarm),
+                    fields = slack_fields,
+                    footer = footer_of(alarm),
+                    ts = os.time(),
+                    mrkdwn_in = { "text", "fields" },
+                },
+            },
+        })
+    end
+    return encode({
+        content = full and config.mention or nil,
+        embeds = {
+            {
+                title = title_of(alarm, style),
+                url = alarm.runbook,
+                description = description_of(alarm),
+                color = style.color,
+                fields = fields,
+                footer = { text = footer_of(alarm) },
+                timestamp = alarm.time,
+            },
+        },
+    })
+end
+
 -- Fire-and-forget: write the payload to a temporary file and let a background curl send and remove it.
 local function post(alarm)
     if not config.webhook or RANK[alarm.severity] < (RANK[config.webhook_min] or RANK.warn) then
         return
     end
-    local text = string.format(
-        "[%s] %s: %s %s%s",
-        alarm.severity,
-        alarm.source,
-        alarm.kind,
-        alarm.message,
-        alarm.foreclosure and " | NOT signable alone: needs a second verifier and the acceptance status" or ""
-    )
-    local body = config.webhook_format == "slack" and encode({ text = text }) or encode({ content = text })
+    local body = payload(alarm)
     local path = os.tmpname()
     local f = io.open(path, "w")
     if not f then

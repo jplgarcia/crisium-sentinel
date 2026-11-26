@@ -50,7 +50,20 @@ posts=$(wc -l < "$tmp/posts.txt" | tr -d ' ')
 expected=$(grep -cE '"severity":"(guardian|operator|warn)"' "$tmp/c.jsonl")
 echo "posted $posts of $expected guardian/operator/warn alarms"
 [ "$posts" -eq "$expected" ] || { echo "FAIL: webhook count"; exit 1; }
-grep -q '"content":"\[guardian\] crisium sentinel: staged_tournament_result_mismatch' "$tmp/posts.txt" \
-    || { echo "FAIL: discord payload"; exit 1; }
-grep -q 'NOT signable alone' "$tmp/posts.txt" || { echo "FAIL: signable note"; exit 1; }
+python3 - "$tmp/posts.txt" <<'PY' || exit 1
+import json, sys
+posts = [json.loads(l) for l in open(sys.argv[1])]
+emb = [p["embeds"][0] for p in posts]
+g = [e for e in emb if e["color"] == 0xE24B4A]
+assert g, "no guardian embed (red)"
+s = [e for e in g if "staged tournament result mismatch" in e["title"]][0]
+names = [f["name"] for f in s["fields"]]
+assert "Staged state" in names and "Local state" in names and "Next step" in names, names
+assert all(len(f["value"]) <= 1024 for e in emb for f in e["fields"]), "field too long"
+assert "Not signable alone" in s["description"], "signable note"
+assert any(e["color"] == 0xF08C2B for e in emb) and any(e["color"] == 0xF2C94C for e in emb), "operator/warn colors"
+compact = [e for e in emb if e["color"] != 0xE24B4A]
+assert all("crisium message" not in [f["name"] for f in e["fields"]] for e in compact), "compact layout"
+print("embeds ok:", len(emb), "posts;", len(g), "guardian")
+PY
 echo "all ok"

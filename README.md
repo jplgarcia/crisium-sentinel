@@ -12,7 +12,10 @@ only `eth_*` methods from the RPC. That keeps it independent of the validators i
 ## What it watches
 
 These are crisium's anomalies. The handler adds a severity, the recipients, a summary and a suggested
-action to each.
+action to each. On the webhook, each alarm is a colored embed (Discord) or attachment (Slack):
+- **guardian** (red): every field, the full hashes and crisium's raw message;
+- **operator** (orange) and **warn** (yellow): a compact card with short hashes and the next step;
+- **self** (gray): log only, unless `CRISIUM_ALERTS_WEBHOOK_MIN=self`.
 
 | Situation | Anomaly |
 |---|---|
@@ -46,6 +49,7 @@ Not covered here:
 | `CRISIUM_ALERTS_WEBHOOK_MIN` | no | Lowest severity posted: `guardian`, `operator`, `warn` (default) or `self`. |
 | `CRISIUM_ALERTS_WEBHOOK_FORMAT` | no | `discord` (default) or `slack`. |
 | `CRISIUM_ALERTS_RUNBOOK` | no | A runbook URL added to each alarm; `{kind}` is replaced by the anomaly kind. |
+| `CRISIUM_ALERTS_MENTION` | no | Text posted above guardian alarms, for example a Discord role mention `<@&ROLE_ID>`. |
 | `WS_URL` | no | The provider's WebSocket endpoint, which pushes new heads, instead of polling. |
 | `WARNING_BLOCKS`, `FIRST_EPOCH`, `POLL_INTERVAL` | no | crisium's `--warning-blocks`, `--first-epoch` and `--poll-interval`. |
 | `CRISIUM_ARGS` | no | Any other crisium options, separated by spaces. |
