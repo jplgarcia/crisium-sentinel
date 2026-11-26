@@ -155,7 +155,8 @@ fly deploy . --config deploy/fly/fly.toml --dockerfile Dockerfile -a crisium-sen
 (`iad` there). `fly logs -a crisium-sentinel-myapp` follows crisium; the alerts also go to your webhook.
 
 The sentinel serves no ports, so the Fly config has no services. Adjust the region and the VM size in
-`fly.toml`. Not yet tested on Fly: only the Docker Compose path ran end to end (see "Tested").
+`fly.toml`. On Fly, the path up to crisium's start ran (see "Tested"); a full run there still needs an
+application built for emulator v0.23.0 on a public network.
 
 ## Other platforms
 
@@ -195,3 +196,12 @@ The sentinel got only `RPC_URL`, `APPLICATION` and a `TEMPLATE_URL` served over 
   resumed.
 - **Settlement:** epochs 0 and 1 were settled by the sling and finished in crisium. The only anomaly was
   `delegate_call_voucher` (the app emits one), and the container stayed healthy until the end (block 1681).
+
+2026-11-26, on Fly.io (`iad`, `shared-cpu-2x`, 2 GB), against an application deployed on Sepolia, with an
+Alchemy `https://` RPC:
+- **Build:** the remote builder built the amd64 image from a clone with the submodule; the emulator package
+  checksum passed. The context uploaded was 1.1 MB.
+- **Secrets and volume:** they reached the machine. The template was downloaded once to the volume, and
+  later restarts reused it.
+- **Stop:** the application's template was built for emulator 0.22 (MARCHID 22), so the container stopped
+  with that message before running crisium, as designed. crisium itself did not run there.
