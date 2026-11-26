@@ -1,0 +1,19 @@
+# Fly.io: one app per monitored application. See README.md, "Fly.io".
+app = "crisium-sentinel-CHANGE-ME"
+primary_region = "iad"
+
+[env]
+  LABEL = "sentinel"
+  CRISIUM_ALERTS_WEBHOOK_MIN = "warn"
+
+[mounts]
+  source = "sentinel_data"
+  destination = "/data"
+  initial_size = "20gb"
+
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  size = "performance-2x"
+  memory = "8gb"

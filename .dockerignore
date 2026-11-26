@@ -1,0 +1,10 @@
+.git
+**/.git
+.env
+*.env
+machine-emulator/*
+!machine-emulator/doc
+machine-emulator/doc/*
+!machine-emulator/doc/recipes
+handler/test.lua
+handler/test.sh
