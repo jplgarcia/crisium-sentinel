@@ -129,6 +129,18 @@ This works the same on a VM (for example AWS EC2) or a laptop. Size it like this
 
 `deploy/fly/fly.toml` is one Fly app per monitored application, with a volume at `/data`.
 
+There is no image to build or push beforehand. `fly deploy` sends this folder to Fly's remote builder,
+which builds the `Dockerfile` there, so you need neither Docker nor a registry on your machine. Run every
+command from the repository root, in a clone that has its submodule: the image copies crisium from
+`machine-emulator/doc/recipes`.
+
+```bash
+git clone --recurse-submodules https://github.com/jplgarcia/crisium-sentinel.git
+cd crisium-sentinel
+```
+
+Then, once per monitored application (`crisium-sentinel-myapp` is an example name):
+
 ```bash
 fly apps create crisium-sentinel-myapp
 fly volumes create sentinel_data --size 20 --region iad -a crisium-sentinel-myapp
@@ -137,8 +149,11 @@ fly secrets set -a crisium-sentinel-myapp RPC_URL=... APPLICATION=0x... TEMPLATE
 fly deploy . --config deploy/fly/fly.toml --dockerfile Dockerfile -a crisium-sentinel-myapp
 ```
 
-The sentinel serves no ports, so the Fly config has no services. Change `app`, the region and the VM size
-in `fly.toml`.
+`-a` overrides the `app` name in `fly.toml`. The volume's region must match `primary_region` in that file
+(`iad` there). `fly logs -a crisium-sentinel-myapp` follows crisium; the alerts also go to your webhook.
+
+The sentinel serves no ports, so the Fly config has no services. Adjust the region and the VM size in
+`fly.toml`. Not yet tested on Fly: only the Docker Compose path ran end to end (see "Tested").
 
 ## Other platforms
 
