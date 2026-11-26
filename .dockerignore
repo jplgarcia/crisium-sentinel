@@ -1,3 +1,4 @@
+# Build context: only what the Dockerfile copies, plus the small top-level files. Never .env (secrets).
 .git
 **/.git
 .env
@@ -6,5 +7,7 @@ machine-emulator/*
 !machine-emulator/doc
 machine-emulator/doc/*
 !machine-emulator/doc/recipes
+machine-emulator/doc/recipes/*
+!machine-emulator/doc/recipes/*.lua
 handler/test.lua
 handler/test.sh
