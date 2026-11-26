@@ -11,7 +11,7 @@ log() { echo "crisium-sentinel: $*" >&2; }
 
 : "${RPC_URL:?set RPC_URL (an Ethereum JSON-RPC endpoint)}"
 : "${APPLICATION:?set APPLICATION (the application contract address)}"
-: "${TEMPLATE_URL:?set TEMPLATE_URL (a .tar.gz of the application's stored template machine)}"
+: "${TEMPLATE_URL:?set TEMPLATE_URL (a .tar.gz of the stored template machine of the application)}"
 DATA_DIR="${DATA_DIR:-/data}"
 DAVE_DIR="${DAVE_DIR:-/opt/dave}"
 LABEL="${LABEL:-sentinel}"
@@ -49,8 +49,36 @@ if [ ! -f "$template/config.json" ] || [ "$(cat "$DATA_DIR/template.source" 2>/d
     printf '%s' "$source_id" > "$DATA_DIR/template.source"
 fi
 
+# The template must come from this image's emulator release: crisium exists only in that release, and
+# another release's machine has another MARCHID (and stored-machine format), which the on-chain step
+# verifier would not accept either.
+want_marchid=$(lua5.4 -e 'print(require("cartesi").MARCHID)')
+got_marchid=$(sed -nE 's/.*"marchid":([0-9]+).*/\1/p' "$template/config.json" | head -n 1)
+if [ -n "$got_marchid" ] && [ "$got_marchid" != "$want_marchid" ]; then
+    fail "the template was built for MARCHID $got_marchid, but this image runs machine-emulator ${EMULATOR_VERSION:-?} (MARCHID $want_marchid). crisium needs the application built and deployed for this emulator release."
+fi
+
+# crisium's RPC client speaks plain http:// only. For an https:// provider, a local proxy forwards
+# its requests over TLS (sentinel/rpc-proxy.py); the provider URL, which may carry an API key, stays in
+# the environment and is never logged.
+crisium_rpc="$RPC_URL"
+case "$RPC_URL" in
+https://*)
+    proxy_port="${RPC_PROXY_PORT:-8545}"
+    python3 "$SENTINEL/rpc-proxy.py" "$proxy_port" &
+    crisium_rpc="http://127.0.0.1:$proxy_port/"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$crisium_rpc" && break
+        sleep 1
+    done
+    ;;
+http://*) ;;
+*) fail "RPC_URL must start with http:// or https://" ;;
+esac
+
 log "preflight: application $APPLICATION"
-template_hash=$(lua5.4 "$SENTINEL/preflight.lua" "$RPC_URL" "$APPLICATION" "$DAVE_DIR" "$template" "$checkpoints/epoch-0") \
+template_hash=$(lua5.4 "$SENTINEL/preflight.lua" "$crisium_rpc" "$APPLICATION" "$DAVE_DIR" "$template" "$checkpoints/epoch-0") \
     || fail "preflight failed"
 
 # The handler's context. PROVIDER is the RPC host only: a provider URL often carries an API key.
@@ -61,7 +89,7 @@ export CRISIUM_ALERTS_VERSION="${CRISIUM_ALERTS_VERSION:-machine-emulator ${EMUL
 export CRISIUM_ALERTS_TEMPLATE_HASH="${CRISIUM_ALERTS_TEMPLATE_HASH:-$template_hash}"
 export CRISIUM_ALERTS_PROVIDER="${CRISIUM_ALERTS_PROVIDER:-$provider}"
 
-set -- --rpc="$RPC_URL" --application="$APPLICATION" --state="$state" --checkpoints="$checkpoints" \
+set -- --rpc="$crisium_rpc" --application="$APPLICATION" --state="$state" --checkpoints="$checkpoints" \
     --dave="$DAVE_DIR" --label="$LABEL" --status-file="$DATA_DIR/status.json" \
     --anomaly-handler=crisium_alerts "$@"
 [ -n "${WS_URL:-}" ] && set -- "$@" --ws="$WS_URL"

@@ -16,7 +16,7 @@ ARG DAVE_VERSION=v3.0.0-alpha.8-test1
 ARG DAVE_ARTIFACTS_SHA256=f83e5f09a69feff8c767ecd5be2e19db34fe998228aac989cba6a32a611ef5c3
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tini lua5.4 lua-dkjson lua-socket \
+    && apt-get install -y --no-install-recommends ca-certificates curl tini lua5.4 lua-dkjson lua-socket python3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eu; \

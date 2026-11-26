@@ -40,7 +40,7 @@ Not covered here:
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `RPC_URL` | yes | Ethereum JSON-RPC over HTTP. It must serve `eth_getLogs` and `finalized` blocks. |
+| `RPC_URL` | yes | Ethereum JSON-RPC, `http://` or `https://`. It must serve `eth_getLogs` and `finalized` blocks. crisium's own client speaks plain HTTP only, so for `https://` the container runs a local TLS proxy (`sentinel/rpc-proxy.py`) that verifies the provider's certificate and never logs the URL. |
 | `APPLICATION` | yes | The application contract. Its consensus, tournament factory and template hash are read from it. |
 | `TEMPLATE_URL` | yes | A `.tar.gz` of the application's stored template machine (the directory with `config.json`), published by the application team. |
 | `TEMPLATE_SHA256` | recommended | The tarball's SHA-256. If it differs, the container stops before running anything. |
@@ -66,6 +66,8 @@ through. The entrypoint fills in four of them:
 
 1. **Template.** The template is downloaded once per `TEMPLATE_URL` and checked against `TEMPLATE_SHA256`.
    A new URL replaces the template, the checkpoints and the state.
+   Its `MARCHID` must be this image's emulator's (23 for v0.23.0). A template built for another release
+   stops the container with both values, since crisium exists only in v0.23.0 and later.
 2. **Preflight** (`sentinel/preflight.lua`):
    - reads the application's consensus, tournament factory and geometry;
    - stores the epoch-0 checkpoint from the template;
